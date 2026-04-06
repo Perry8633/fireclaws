@@ -578,7 +578,7 @@ class MainWindow:
             llm_agent = LLMAgent(
                 llm_config=self.config.llm,
                 search_engine=SearchEngine(
-                    config=SearchConfig(provider=self.search_var.get())
+                    config=SearchConfig(provider=self.config.search.provider)
                 ),
                 llm_proxy=self.config.llm_proxy if self.config.llm_proxy.enabled else None
             )
