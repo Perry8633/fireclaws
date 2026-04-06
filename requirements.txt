@@ -1,0 +1,33 @@
+# 核心依赖
+requests>=2.28.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# PDF处理
+PyMuPDF>=1.23.0
+pdfplumber>=0.10.0
+
+# LLM
+openai>=1.0.0
+
+# 搜索引擎
+duckduckgo-search>=4.0.0
+
+# 代理
+httpx>=0.25.0
+PySocks>=1.7.0
+
+# 配置与安全
+cryptography>=41.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# 日志和进度
+loguru>=0.7.0
+tqdm>=4.65.0
+
+# 定时任务
+croniter>=4.0.0
+
+# GUI
+# tkinter (内置)
