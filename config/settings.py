@@ -65,7 +65,12 @@ class HistoryConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    llm_proxy: ProxyConfig = ProxyConfig()
+    llm_proxy: ProxyConfig = ProxyConfig(
+        enabled=True,
+        protocol="http",
+        host="proxysz.zte.com.cn",
+        port=80
+    )
     search_proxy: ProxyConfig = ProxyConfig()  # 搜索引擎代理
     llm: LLMConfig = LLMConfig()
     search: SearchConfig = SearchConfig()

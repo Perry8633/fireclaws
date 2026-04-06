@@ -59,7 +59,8 @@ class BaseCrawler:
                 proxies=self._get_proxy(),
                 headers=self._get_headers(),
                 timeout=self.timeout,
-                allow_redirects=True
+                allow_redirects=True,
+                verify=False  # 代理环境下禁用SSL验证
             )
             response.raise_for_status()
             response.encoding = response.apparent_encoding or 'utf-8'

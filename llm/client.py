@@ -15,10 +15,15 @@ class LLMClient:
     def _get_client(self) -> OpenAI:
         """获取或创建客户端"""
         if self._client is None:
-            # 设置环境变量代理（如果需要）
+            import os
+            # 清除可能存在的代理环境变量，防止冲突
+            for k in list(os.environ.keys()):
+                if 'proxy' in k.lower():
+                    del os.environ[k]
+
+            # 设置代理（如果需要）
             http_proxy = ProxyManager.get_httpx_proxy(self.proxy)
             if http_proxy:
-                import os
                 os.environ["http_proxy"] = http_proxy
                 os.environ["https_proxy"] = http_proxy
 
