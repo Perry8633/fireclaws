@@ -43,13 +43,14 @@ class LLMAgent:
         }
     ]
 
-    SYSTEM_PROMPT = """你是一个专业的分析助手。你具有搜索网络的能力。
+    SYSTEM_PROMPT = """你是一个专业的分析助手，负责分析网页内容并生成报告。
 
-当分析过程中发现信息不足时，你可以通过调用 search(query) 函数搜索相关信息。
-搜索时使用简短的关键词。
+【搜索引擎技能】
+你可以调用 search(query) 函数搜索网络获取补充信息。
+当你认为需要搜索时，直接调用工具，不需要询问用户。
+当信息足够完成分析时，输出"完成"。
 
-当直接输出分析报告，不需要再调用搜索时，说"完成"。
-
+【输出格式】
 请按以下格式输出报告：
 # 标题
 ## 概述
@@ -57,7 +58,6 @@ class LLMAgent:
 
 ## 详细内容
 [详细分析，可包含引用来源]
-
 """
 
     def __init__(
@@ -94,10 +94,23 @@ class LLMAgent:
         """
         system_prompt = custom_system_prompt or self.SYSTEM_PROMPT
 
+        # 构建4段式消息
+        user_content = f"""【任务描述】
+{user_query}
+
+【网页内容】
+{context}
+
+{self.SYSTEM_PROMPT}
+
+【分析要求】
+请根据以上网页内容，按照指定格式输出分析报告。
+"""
+
         # 构建初始消息
         self.messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"请分析以下内容并输出报告：\n\n{context}\n\n用户问题：{user_query}"}
+            {"role": "user", "content": user_content}
         ]
 
         search_count = 0
@@ -166,9 +179,20 @@ class LLMAgent:
         """
         system_prompt = custom_system_prompt or self.SYSTEM_PROMPT
 
+        user_content = f"""【任务描述】
+{user_query}
+
+【网页内容】
+{context}
+
+{system_prompt}
+
+请根据以上网页内容，按照指定格式输出分析报告。
+"""
+
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"请分析以下内容并输出报告：\n\n{context}\n\n用户问题：{user_query}"}
+            {"role": "user", "content": user_content}
         ]
 
         # 非流式获取完整回复

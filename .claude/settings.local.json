@@ -3,7 +3,13 @@
     "allow": [
       "Bash(python3:*)",
       "Bash(pip install:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(apt-get update:*)",
+      "Bash(apt-get install:*)",
+      "Bash(curl:*)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)"
     ]
   }
 }

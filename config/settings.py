@@ -49,6 +49,21 @@ class ScheduleConfig(BaseModel):
     cron_expression: str = "0 9 * * *"
 
 
+class HistoryItem(BaseModel):
+    """历史记录项"""
+    id: str = ""
+    timestamp: str = ""
+    task_desc: str = ""
+    keywords: list[str] = []
+    urls: list[str] = ""
+
+
+class HistoryConfig(BaseModel):
+    """历史记录配置"""
+    items: list[HistoryItem] = []
+    max_items: int = 6
+
+
 class AppConfig(BaseModel):
     llm_proxy: ProxyConfig = ProxyConfig()
     search_proxy: ProxyConfig = ProxyConfig()  # 搜索引擎代理
@@ -56,4 +71,5 @@ class AppConfig(BaseModel):
     search: SearchConfig = SearchConfig()
     feishu: FeishuConfig = FeishuConfig()
     schedule: ScheduleConfig = ScheduleConfig()
+    history: HistoryConfig = HistoryConfig()
     password_hash: str = ""  # PBKDF2 hash

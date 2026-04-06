@@ -1,13 +1,16 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog
 import threading
+import uuid
+from datetime import datetime
 from typing import Optional, Callable
 from pathlib import Path
+import json
 
 from crawler.base_crawler import BaseCrawler, CrawlResult
 from crawler.search_engine import SearchEngine
 from llm.analyzer import LLMAgent, extract_report_sections
-from config.settings import AppConfig, SearchConfig, ProxyConfig, LLMConfig, ScheduleConfig
+from config.settings import AppConfig, SearchConfig, ProxyConfig, LLMConfig, ScheduleConfig, HistoryItem, HistoryConfig
 from config.encryption import PasswordManager
 from utils.scheduler import TaskScheduler
 
@@ -126,6 +129,7 @@ class MainWindow:
         menubar.add_cascade(label="文件", menu=file_menu)
         file_menu.add_command(label="导出HTML", command=self._export_html)
         file_menu.add_command(label="导出Markdown", command=self._export_markdown)
+        file_menu.add_command(label="导出JSON", command=self._export_json)
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.root.quit)
 
@@ -142,6 +146,25 @@ class MainWindow:
 
     def _setup_left_panel(self, parent):
         """左侧配置面板"""
+        # 历史记录
+        ttk.Label(parent, text="历史记录：").pack(anchor=tk.W, pady=(0, 5))
+
+        history_frame = ttk.Frame(parent)
+        history_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.history_var = tk.StringVar()
+        self.history_combo = ttk.Combobox(
+            history_frame,
+            textvariable=self.history_var,
+            state="readonly",
+            width=40
+        )
+        self.history_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.history_combo.bind("<<ComboboxSelected>>", self._on_history_select)
+
+        clear_history_btn = ttk.Button(history_frame, text="清除", command=self._clear_history)
+        clear_history_btn.pack(side=tk.LEFT, padx=(5, 0))
+
         # 任务描述
         ttk.Label(parent, text="任务描述：", font=("", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
 
@@ -149,7 +172,7 @@ class MainWindow:
         self.task_entry.pack(fill=tk.X, pady=(0, 10))
 
         # 关键词
-        ttk.Label(parent, text="关键词（用于搜索引擎发现URLs）：").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(parent, text="关键词：").pack(anchor=tk.W, pady=(0, 5))
 
         self.keyword_input = TagInputFrame(parent)
         self.keyword_input.pack(fill=tk.X, pady=(0, 10))
@@ -159,21 +182,6 @@ class MainWindow:
 
         self.urls_text = scrolledtext.ScrolledText(parent, height=6, wrap=tk.WORD)
         self.urls_text.pack(fill=tk.X, pady=(0, 10))
-
-        # 搜索引擎选择
-        ttk.Label(parent, text="搜索引擎：").pack(anchor=tk.W, pady=(0, 5))
-
-        search_frame = ttk.Frame(parent)
-        search_frame.pack(fill=tk.X, pady=(0, 10))
-
-        self.search_var = tk.StringVar(value="ddgs")
-        search_combo = ttk.Combobox(
-            search_frame,
-            textvariable=self.search_var,
-            values=["ddgs", "brave", "tavily"],
-            state="readonly"
-        )
-        search_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # 爬取深度
         ttk.Label(parent, text="爬取深度（1-3）：").pack(anchor=tk.W, pady=(0, 5))
@@ -276,6 +284,7 @@ class MainWindow:
 
         ttk.Button(btn_frame, text="导出HTML", command=self._export_html).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_frame, text="导出Markdown", command=self._export_markdown).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="导出JSON", command=self._export_json).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_frame, text="发送飞书", command=self._send_feishu).pack(side=tk.LEFT)
 
     def _setup_right_panel(self, parent):
@@ -303,9 +312,6 @@ class MainWindow:
 
     def _load_config(self):
         """加载配置到UI"""
-        # 加载搜索引擎配置
-        self.search_var.set(self.config.search.provider)
-
         # 加载定时任务配置
         if hasattr(self.config, 'schedule'):
             self.schedule_enabled_var.set(self.config.schedule.enabled)
@@ -313,6 +319,9 @@ class MainWindow:
             self.schedule_time_var.set(self.config.schedule.daily_time)
             self.cron_expr_var.set(self.config.schedule.cron_expression)
             self._update_schedule_ui()
+
+        # 加载历史记录
+        self._update_history_combo()
 
     def _on_schedule_enabled_change(self):
         """定时任务开关改变"""
@@ -349,6 +358,88 @@ class MainWindow:
             weekly_time=self.schedule_time_var.get(),
             cron_expression=self.cron_expr_var.get()
         )
+
+    def _update_history_combo(self):
+        """更新历史记录下拉框"""
+        history = self.config.history if hasattr(self.config, 'history') else HistoryConfig()
+        items = history.items if history.items else []
+
+        choices = []
+        for item in items:
+            # 显示格式：时间 - 任务描述前20字
+            short_desc = item.task_desc[:20] if item.task_desc else "无描述"
+            display = f"{item.timestamp[:16]} - {short_desc}..."
+            choices.append(display)
+
+        if choices:
+            self.history_combo["values"] = choices
+            self.history_combo.state(["!readonly"])
+        else:
+            self.history_combo["values"] = ["(无历史记录)"]
+            self.history_combo.state(["readonly"])
+
+    def _on_history_select(self, event=None):
+        """选择历史记录"""
+        idx = self.history_combo.current()
+        history = self.config.history if hasattr(self.config, 'history') else HistoryConfig()
+        items = history.items if history.items else []
+
+        if 0 <= idx < len(items):
+            item = items[idx]
+            # 填充表单
+            self.task_entry.delete("1.0", tk.END)
+            self.task_entry.insert("1.0", item.task_desc)
+
+            self.keyword_input.set_tags(item.keywords)
+
+            self.urls_text.delete("1.0", tk.END)
+            if item.urls:
+                self.urls_text.insert("1.0", "\n".join(item.urls))
+
+    def _save_to_history(self, task_desc: str, keywords: list, urls: list):
+        """保存到历史记录"""
+        if not task_desc and not urls:
+            return
+
+        # 创建新记录
+        new_item = HistoryItem(
+            id=str(uuid.uuid4()),
+            timestamp=datetime.now().isoformat(),
+            task_desc=task_desc,
+            keywords=keywords,
+            urls=urls
+        )
+
+        # 获取现有历史
+        if not hasattr(self.config, 'history') or not self.config.history:
+            self.config.history = HistoryConfig()
+
+        items = self.config.history.items or []
+
+        # 检查是否与最近一条相同
+        if items and items[0].task_desc == task_desc and items[0].urls == urls:
+            return  # 相同，不保存
+
+        # 添加到开头
+        items.insert(0, new_item)
+
+        # 保留最多6条
+        if len(items) > self.config.history.max_items:
+            items = items[:self.config.history.max_items]
+
+        self.config.history.items = items
+
+        # 保存
+        self.pm.save_config(self.config)
+        self._update_history_combo()
+
+    def _clear_history(self):
+        """清除历史记录"""
+        if hasattr(self.config, 'history'):
+            self.config.history.items = []
+            self.pm.save_config(self.config)
+            self._update_history_combo()
+            messagebox.showinfo("成功", "历史记录已清除")
 
     def _get_urls_from_text(self) -> list:
         """从文本框获取URLs"""
@@ -440,31 +531,15 @@ class MainWindow:
     def _run_task(self, task_desc: str, urls: list, keywords: list):
         """后台执行任务"""
         try:
-            all_urls = set(urls)
-            search_results = []
+            # 保存到历史记录
+            self._save_to_history(task_desc, keywords, urls)
 
-            # 1. 搜索引擎搜索关键词，发现URLs
-            if keywords:
-                self._update_status("正在搜索...")
-                search_engine = SearchEngine(
-                    config=SearchConfig(provider=self.search_var.get()),
-                    proxy=self.config.search_proxy if self.config.search_proxy.enabled else None
-                )
+            total_urls = len(urls)
 
-                for kw in keywords:
-                    results = search_engine.search(kw, max_results=10)
-                    search_results.extend(results)
-                    for r in results:
-                        all_urls.add(r.url)
-
-            # 更新进度
-            total_urls = len(all_urls)
-            self._update_progress(10)  # 搜索完成
-
-            # 2. 爬取URLs
+            # 1. 爬取URLs（不搜索，只爬取用户指定的URLs）
             self._update_status(f"正在爬取 {total_urls} 个页面...")
-            self._update_crawl_content(f"发现 {total_urls} 个URL待爬取：\n")
-            self._update_crawl_content('\n'.join(f"- {u}" for u in list(all_urls)[:20]))
+            self._update_crawl_content(f"开始爬取 {total_urls} 个URL：\n")
+            self._update_crawl_content('\n'.join(f"- {u}" for u in urls[:20]))
             if total_urls > 20:
                 self._update_crawl_content(f"\n... 还有 {total_urls - 20} 个")
 
@@ -474,7 +549,7 @@ class MainWindow:
             )
 
             crawl_results = []
-            for i, url in enumerate(all_urls):
+            for i, url in enumerate(urls):
                 self._update_status(f"正在爬取 {i+1}/{total_urls}: {url[:50]}...")
                 result = crawler.crawl_url(url)
                 crawl_results.append(result)
@@ -588,6 +663,66 @@ class MainWindow:
         if filepath:
             Path(filepath).write_text(content, encoding='utf-8')
             messagebox.showinfo("成功", f"已导出到 {filepath}")
+
+    def _export_json(self):
+        """导出JSON"""
+        content = self.llm_text.get("1.0", tk.END).strip()
+        if not content:
+            messagebox.showwarning("提示", "没有内容可导出")
+            return
+
+        # 解析报告内容
+        report = self._parse_report_to_json(content)
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON文件", "*.json"), ("所有文件", "*.*")]
+        )
+        if filepath:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+            messagebox.showinfo("成功", f"已导出到 {filepath}")
+
+    def _parse_report_to_json(self, content: str) -> dict:
+        """将Markdown报告解析为JSON结构"""
+        report = {
+            "title": "",
+            "summary": "",
+            "content": content,
+            "sources": []
+        }
+
+        lines = content.split('\n')
+        current_section = None
+        content_buffer = []
+
+        for line in lines:
+            if line.startswith('# ') and not report["title"]:
+                report["title"] = line[2:].strip()
+                current_section = None
+            elif line.startswith('## '):
+                if current_section == "content":
+                    report["content"] = '\n'.join(content_buffer).strip()
+                    content_buffer = []
+                elif current_section == "summary" and content_buffer:
+                    report["summary"] = '\n'.join(content_buffer).strip()
+                    content_buffer = []
+
+                section_name = line[3:].strip().lower()
+                if '概述' in section_name or 'summary' in section_name:
+                    current_section = "summary"
+                elif '详细' in section_name or 'content' in section_name:
+                    current_section = "content"
+            else:
+                content_buffer.append(line)
+
+        # 处理最后一部分
+        if current_section == "content":
+            report["content"] = '\n'.join(content_buffer).strip()
+        elif current_section == "summary" and content_buffer:
+            report["summary"] = '\n'.join(content_buffer).strip()
+
+        return report
 
     def _markdown_to_html(self, markdown: str) -> str:
         """简单Markdown转HTML"""

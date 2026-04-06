@@ -9,7 +9,6 @@ from urllib.parse import urlparse, urljoin
 from config.settings import ProxyConfig
 from utils.proxy_manager import ProxyManager
 from .markdown_converter import MarkdownConverter
-from .pdf_downloader import PDFDownloader
 
 
 @dataclass
@@ -18,7 +17,6 @@ class CrawlResult:
     url: str
     title: str = ""
     markdown: str = ""
-    pdfs: List[str] = field(default_factory=list)
     children: List['CrawlResult'] = field(default_factory=list)
     error: str = ""
 
@@ -40,7 +38,6 @@ class BaseCrawler:
         self.max_depth = max_depth
         self.max_pages_per_depth = max_pages_per_depth
         self.markdown_converter = MarkdownConverter()
-        self.pdf_downloader = PDFDownloader(proxy=proxy)
 
     def _get_proxy(self):
         return ProxyManager.get_requests_proxy(self.proxy) if self.proxy else None
@@ -167,10 +164,6 @@ class BaseCrawler:
         result.title = self.extract_title(soup)
         content_html = self.extract_content(soup)
         result.markdown = self.convert_to_markdown(content_html)
-
-        # 下载PDF
-        pdf_links = self.pdf_downloader.find_pdf_links(html, url)
-        result.pdfs = [link for link in pdf_links if self.pdf_downloader.download_pdf(link)]
 
         # 递归爬取子链接（如果深度未达上限）
         if depth < self.max_depth:
