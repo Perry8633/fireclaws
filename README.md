@@ -1,6 +1,6 @@
-# 网页爬虫 + LLM 分析工具
+# Fireclaws - 智能爬虫 + LLM 分析工具
 
-基于 Python 的桌面应用程序，用于爬取网页内容并使用大语言模型进行分析。
+基于 Python 的桌面应用程序，支持网页内容爬取、大语言模型分析，以及 OFAC/BIS 制裁清单实时监测。
 
 ## 主要功能
 
@@ -10,29 +10,39 @@
 - 自动识别并下载 PDF 文档
 - HTML 转 Markdown（参考 Firecrawl 思路）
 
-### 2. 搜索引擎集成
+### 2. OFAC/BIS 制裁清单监测
+- **OFAC 制裁清单**：从 `ofac.treasury.gov` 爬取每日更新
+- **BIS 实体清单**：从 `federalregister.gov` 爬取，双层爬取结构：
+  - 第1层：日期页面 `YYYY/MM/DD`
+  - 查找 "Industry and Security Bureau" 后的 Permalink
+  - 第2层：文档详情页提取内容
+- 中国主体智能识别（关键词 + 实体提取）
+- 支持 Playwright 渲染 JavaScript 内容
+- LLM 深度分析制裁实体
+
+### 3. 搜索引擎集成
 - **DuckDuckGo (DDGS)**: 无需 API Key，免费使用
 - **Brave Search**: 需 API Key，每月 2000 次免费
 - **Tavily**: 专为 AI 优化，1000 次/月免费
 
-### 3. LLM 分析
+### 4. LLM 分析
 - OpenAI 兼容接口，支持任意 BASE_URL
 - 支持自定义提示词
 - 支持流式输出
 - 可主动搜索网络补充信息
 
-### 4. 其他特性
+### 5. 其他特性
 - 密码保护配置（PBKDF2 + Fernet 加密）
 - 爬虫和 LLM 独立代理配置（HTTP/HTTPS/SOCKS5）
 - 飞书文档发送接口（预留）
-- HTML/Markdown 导出
+- HTML/Markdown/JSON 导出
 
 ## 技术栈
 
 | 功能 | 方案 |
 |------|------|
 | GUI | Tkinter（内置） |
-| 爬虫 | requests + BeautifulSoup |
+| 爬虫 | requests + BeautifulSoup + Playwright |
 | PDF | PyMuPDF / pdfplumber |
 | LLM | openai 库 |
 | 搜索引擎 | DuckDuckGo / Brave Search / Tavily |
@@ -52,14 +62,17 @@ fireclaws/
 │   └── encryption.py       # 密码加密
 ├── crawler/
 │   ├── base_crawler.py     # 爬虫核心
+│   ├── sanctions_crawler.py # OFAC/BIS制裁爬虫
 │   ├── markdown_converter.py# HTML→Markdown
 │   ├── pdf_downloader.py   # PDF下载
 │   └── search_engine.py    # 搜索引擎
 ├── llm/
 │   ├── client.py           # OpenAI客户端
-│   └── analyzer.py         # LLM分析
+│   ├── analyzer.py         # LLM分析
+│   └── sanctions_analyzer.py # 制裁实体分析
 ├── gui/
 │   ├── main_window.py      # 主窗口
+│   ├── styles.py           # GUI样式（Terracotta风格）
 │   └── settings_dialog.py  # 设置弹窗
 ├── feishu/                 # 飞书预留接口
 └── utils/                  # 工具函数
@@ -75,6 +88,7 @@ pip install -r requirements.txt
 
 主要依赖：
 - requests, beautifulsoup4, lxml
+- playwright（需运行 `playwright install` 安装浏览器）
 - PyMuPDF, pdfplumber
 - openai
 - duckduckgo-search
@@ -82,7 +96,13 @@ pip install -r requirements.txt
 - cryptography, pydantic, pydantic-settings
 - loguru, tqdm
 
-### 2. 运行
+### 2. 安装 Playwright 浏览器
+
+```bash
+playwright install chromium
+```
+
+### 3. 运行
 
 ```bash
 python main.py
@@ -92,7 +112,18 @@ python main.py
 
 ## 使用方法
 
-### 基本流程
+### 制裁清单监测
+
+1. 选择数据源：**OFAC** / **BIS** / **全部**
+2. 设置日期范围（默认近30天）
+3. 设置关键词（默认：`china`, `中国`, `深圳`, `上海` 等）
+4. 点击"开始监测"
+5. 程序自动：
+   - 爬取制裁清单更新
+   - 识别中国主体
+   - LLM 深度分析
+
+### 基本爬虫流程
 
 1. **输入任务描述**：说明你想了解什么内容
 2. **输入关键词**（可选）：用于搜索引擎发现相关 URL
@@ -165,6 +196,7 @@ python main.py
 分析完成后可导出：
 - **HTML**：带样式的可视化页面
 - **Markdown**：纯文本格式
+- **JSON**：结构化数据
 
 ## 飞书集成（预留）
 
