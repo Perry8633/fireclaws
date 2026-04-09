@@ -4,6 +4,7 @@ import re
 
 from config.settings import AppConfig, LLMConfig, ProxyConfig, SearchConfig, FeishuConfig
 from config.encryption import PasswordManager
+from gui.styles import DesignSystem
 
 
 class SettingsDialog:
@@ -28,6 +29,9 @@ class SettingsDialog:
         x = (self.dialog.winfo_screenwidth() - 600) // 2
         y = (self.dialog.winfo_screenheight() - 500) // 2
         self.dialog.geometry(f"600x500+{x}+{y}")
+
+        # 设置背景色
+        self.dialog.configure(bg=DesignSystem.COLORS['background'])
 
         self._setup_ui()
 
@@ -61,8 +65,8 @@ class SettingsDialog:
         btn_frame = ttk.Frame(self.dialog)
         btn_frame.pack(fill=tk.X, padx=10, pady=10)
 
-        ttk.Button(btn_frame, text="保存", command=self._save).pack(side=tk.RIGHT, padx=(5, 0))
-        ttk.Button(btn_frame, text="取消", command=self.dialog.destroy).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text="保存", style="Primary.TButton", command=self._save).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(btn_frame, text="取消", style="Secondary.TButton", command=self.dialog.destroy).pack(side=tk.RIGHT)
 
     def _setup_llm_tab(self):
         """大模型设置Tab"""
@@ -103,7 +107,16 @@ class SettingsDialog:
 
         # System Prompt
         ttk.Label(frame, text="System Prompt：").grid(row=5, column=0, sticky=tk.NW, pady=5, padx=padding)
-        self.system_prompt_text = tk.Text(frame, height=8, wrap=tk.WORD)
+        self.system_prompt_text = tk.Text(frame, height=8, wrap=tk.WORD,
+            bg=DesignSystem.COLORS['surface'],
+            fg=DesignSystem.COLORS['text_primary'],
+            insertbackground=DesignSystem.COLORS['text_primary'],
+            font=DesignSystem.FONTS['body'],
+            relief='solid',
+            bd=1,
+            padx=8,
+            pady=8
+        )
         self.system_prompt_text.grid(row=5, column=1, sticky=tk.EW, pady=5, padx=padding)
         self.system_prompt_text.insert("1.0", self.config.llm.system_prompt)
 
@@ -207,7 +220,7 @@ class SettingsDialog:
         ttk.Label(
             frame,
             text="飞书集成（预留接口）",
-            font=("", 12, "bold")
+            style="Title.TLabel"
         ).grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=10, padx=padding)
 
         # 启用

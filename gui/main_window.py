@@ -9,10 +9,13 @@ import json
 
 from crawler.base_crawler import BaseCrawler, CrawlResult
 from crawler.search_engine import SearchEngine
+from crawler.sanctions_crawler import SanctionsCrawler
 from llm.analyzer import LLMAgent, extract_report_sections
-from config.settings import AppConfig, SearchConfig, ProxyConfig, LLMConfig, ScheduleConfig, HistoryItem, HistoryConfig
+from llm.sanctions_analyzer import SanctionsAnalyzer
+from config.settings import AppConfig, SearchConfig, ProxyConfig, LLMConfig, ScheduleConfig, HistoryItem, HistoryConfig, SanctionsConfig
 from config.encryption import PasswordManager
 from utils.scheduler import TaskScheduler
+from gui.styles import DesignSystem
 
 
 class TagInputFrame(ttk.Frame):
@@ -31,7 +34,7 @@ class TagInputFrame(ttk.Frame):
         self.entry.bind("<Return>", lambda e: self._add_tag())
 
         # 添加按钮
-        self.add_btn = ttk.Button(self, text="添加", command=self._add_tag)
+        self.add_btn = ttk.Button(self, text="添加", style="Secondary.TButton", command=self._add_tag)
         self.add_btn.pack(side=tk.LEFT, padx=(5, 0))
 
         # 标签容器
@@ -60,7 +63,7 @@ class TagInputFrame(ttk.Frame):
             tag_frame = ttk.Frame(self.tags_frame)
             tag_frame.pack(side=tk.LEFT, padx=(0, 5), pady=(0, 5))
 
-            label = ttk.Label(tag_frame, text=tag, background="#e1e1e1", padding=(5, 2))
+            label = ttk.Label(tag_frame, text=tag, background=DesignSystem.COLORS['button_bg'], padding=(5, 2))
             label.pack(side=tk.LEFT)
 
             btn = ttk.Button(
@@ -89,8 +92,12 @@ class MainWindow:
 
         # 创建主窗口
         self.root = tk.Tk()
-        self.root.title("网页爬虫 + LLM 分析工具")
+        self.root.title("OFAC/BIS 制裁清单监测系统")
         self.root.geometry("1200x800")
+
+        # 配置设计系统样式
+        DesignSystem.configure_style()
+        self.root.configure(bg=DesignSystem.COLORS['background'])
 
         self._setup_ui()
         self._load_config()
@@ -145,64 +152,85 @@ class MainWindow:
         help_menu.add_command(label="关于", command=self._show_about)
 
     def _setup_left_panel(self, parent):
-        """左侧配置面板"""
-        # 历史记录
-        ttk.Label(parent, text="历史记录：").pack(anchor=tk.W, pady=(0, 5))
+        """左侧配置面板 - OFAC/BIS制裁监测"""
+        padding = 10
 
-        history_frame = ttk.Frame(parent)
-        history_frame.pack(fill=tk.X, pady=(0, 10))
+        # ===== 数据源选择 =====
+        ttk.Label(parent, text="数据源：", style="Title.TLabel").pack(anchor=tk.W, pady=(0, 5))
 
-        self.history_var = tk.StringVar()
-        self.history_combo = ttk.Combobox(
-            history_frame,
-            textvariable=self.history_var,
-            state="readonly",
-            width=40
-        )
-        self.history_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.history_combo.bind("<<ComboboxSelected>>", self._on_history_select)
+        source_frame = ttk.Frame(parent)
+        source_frame.pack(fill=tk.X, pady=(0, 10))
 
-        clear_history_btn = ttk.Button(history_frame, text="清除", command=self._clear_history)
-        clear_history_btn.pack(side=tk.LEFT, padx=(5, 0))
+        self.source_var = tk.StringVar(value="all")
+        ttk.Radiobutton(source_frame, text="OFAC", variable=self.source_var, value="ofac").pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Radiobutton(source_frame, text="BIS", variable=self.source_var, value="bis").pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Radiobutton(source_frame, text="全部", variable=self.source_var, value="all").pack(side=tk.LEFT)
 
-        # 任务描述
-        ttk.Label(parent, text="任务描述：", font=("", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        # ===== 日期范围 =====
+        ttk.Label(parent, text="日期范围：", style="Title.TLabel").pack(anchor=tk.W, pady=(0, 5))
 
-        self.task_entry = tk.Text(parent, height=4, wrap=tk.WORD)
-        self.task_entry.pack(fill=tk.X, pady=(0, 10))
+        date_frame = ttk.Frame(parent)
+        date_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # 关键词
-        ttk.Label(parent, text="关键词：").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(date_frame, text="从").pack(side=tk.LEFT)
+        self.date_start_var = tk.StringVar()
+        start_entry = ttk.Entry(date_frame, textvariable=self.date_start_var, width=12)
+        start_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(date_frame, text="至").pack(side=tk.LEFT)
+        self.date_end_var = tk.StringVar()
+        end_entry = ttk.Entry(date_frame, textvariable=self.date_end_var, width=12)
+        end_entry.pack(side=tk.LEFT, padx=5)
+
+        # 快捷按钮
+        quick_frame = ttk.Frame(parent)
+        quick_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Button(quick_frame, text="今日", style="Secondary.TButton",
+                   command=lambda: self._set_date_range("today")).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(quick_frame, text="近7天", style="Secondary.TButton",
+                   command=lambda: self._set_date_range("7days")).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(quick_frame, text="近30天", style="Secondary.TButton",
+                   command=lambda: self._set_date_range("30days")).pack(side=tk.LEFT)
+
+        # ===== 关键词 =====
+        ttk.Label(parent, text="监控关键词：", style="Title.TLabel").pack(anchor=tk.W, pady=(0, 5))
 
         self.keyword_input = TagInputFrame(parent)
         self.keyword_input.pack(fill=tk.X, pady=(0, 10))
 
-        # URLs输入
-        ttk.Label(parent, text=" URLs（每行一个，直接爬取）：").pack(anchor=tk.W, pady=(0, 5))
+        # ===== 任务描述 =====
+        ttk.Label(parent, text="任务描述：", style="Title.TLabel").pack(anchor=tk.W, pady=(0, 5))
 
-        self.urls_text = scrolledtext.ScrolledText(parent, height=6, wrap=tk.WORD)
-        self.urls_text.pack(fill=tk.X, pady=(0, 10))
-
-        # 爬取深度
-        ttk.Label(parent, text="爬取深度（1-3）：").pack(anchor=tk.W, pady=(0, 5))
-
-        depth_frame = ttk.Frame(parent)
-        depth_frame.pack(fill=tk.X, pady=(0, 10))
-
-        self.depth_var = tk.IntVar(value=1)
-        depth_spin = ttk.Spinbox(
-            depth_frame,
-            from_=1,
-            to=3,
-            textvariable=self.depth_var,
-            width=10
+        self.task_entry = tk.Text(parent, height=3, wrap=tk.WORD,
+            bg=DesignSystem.COLORS['surface'],
+            fg=DesignSystem.COLORS['text_primary'],
+            insertbackground=DesignSystem.COLORS['text_primary'],
+            font=DesignSystem.FONTS['body'],
+            relief='solid',
+            bd=1,
+            padx=8,
+            pady=8
         )
-        depth_spin.pack(side=tk.LEFT)
+        self.task_entry.pack(fill=tk.X, pady=(0, 10))
 
-        # 定时任务
-        ttk.Label(parent, text="定时任务：", font=("", 10, "bold")).pack(anchor=tk.W, pady=(10, 5))
+        # ===== 邮件配置 =====
+        ttk.Label(parent, text="邮件通知：", style="Title.TLabel").pack(anchor=tk.W, pady=(0, 5))
 
-        schedule_frame = ttk.LabelFrame(parent, text="定时执行")
+        email_frame = ttk.LabelFrame(parent, text="邮件配置", style="Card.TLabelframe")
+        email_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.email_enabled_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(email_frame, text="启用邮件通知", variable=self.email_enabled_var).pack(anchor=tk.W, padx=10, pady=(5, 0))
+
+        ttk.Label(email_frame, text="收件人（逗号分隔）：").pack(anchor=tk.W, padx=10, pady=(5, 0))
+        self.email_recipients_var = tk.StringVar()
+        ttk.Entry(email_frame, textvariable=self.email_recipients_var).pack(fill=tk.X, padx=10, pady=(0, 5))
+
+        # ===== 定时任务 =====
+        ttk.Label(parent, text="定时监控：", style="Title.TLabel").pack(anchor=tk.W, pady=(0, 5))
+
+        schedule_frame = ttk.LabelFrame(parent, text="定时执行", style="Card.TLabelframe")
         schedule_frame.pack(fill=tk.X, pady=(0, 10))
 
         # 启用定时任务
@@ -254,14 +282,16 @@ class MainWindow:
         ttk.Label(
             schedule_frame,
             textvariable=self.next_run_var,
-            foreground="gray"
+            foreground=DesignSystem.COLORS['text_secondary']
         ).pack(anchor=tk.W, padx=10, pady=(0, 5))
 
-        # 开始按钮
+        # ===== 按钮区域 =====
+        # 开始监测按钮
         self.start_btn = ttk.Button(
             parent,
-            text="开始任务",
-            command=self._start_task
+            text="开始监测",
+            style="Primary.TButton",
+            command=self._start_monitoring
         )
         self.start_btn.pack(fill=tk.X, pady=(0, 5))
 
@@ -278,14 +308,13 @@ class MainWindow:
         self.status_var = tk.StringVar(value="就绪")
         ttk.Label(parent, textvariable=self.status_var).pack(anchor=tk.W, pady=(0, 10))
 
-        # 导出按钮
+        # 操作按钮
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill=tk.X)
 
-        ttk.Button(btn_frame, text="导出HTML", command=self._export_html).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="导出Markdown", command=self._export_markdown).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="导出JSON", command=self._export_json).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="发送飞书", command=self._send_feishu).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="导出报告", style="Secondary.TButton", command=self._export_report).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="发送邮件", style="Secondary.TButton", command=self._send_email).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="清空日志", style="Secondary.TButton", command=self._clear_log).pack(side=tk.LEFT)
 
     def _setup_right_panel(self, parent):
         """右侧结果面板"""
@@ -297,21 +326,49 @@ class MainWindow:
         content_tab = ttk.Frame(notebook)
         notebook.add(content_tab, text="爬取内容")
 
-        self.content_text = scrolledtext.ScrolledText(content_tab, wrap=tk.WORD)
+        self.content_text = scrolledtext.ScrolledText(content_tab, wrap=tk.WORD,
+            bg=DesignSystem.COLORS['surface'],
+            fg=DesignSystem.COLORS['text_primary'],
+            font=DesignSystem.FONTS['body']
+        )
         self.content_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # LLM分析Tab
-        llm_tab = ttk.Frame(notebook)
-        notebook.add(llm_tab, text="LLM分析")
+        # 分析结果Tab
+        analysis_tab = ttk.Frame(notebook)
+        notebook.add(analysis_tab, text="分析结果")
 
-        self.llm_text = scrolledtext.ScrolledText(llm_tab, wrap=tk.WORD)
-        self.llm_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.analysis_text = scrolledtext.ScrolledText(analysis_tab, wrap=tk.WORD,
+            bg=DesignSystem.COLORS['surface'],
+            fg=DesignSystem.COLORS['text_primary'],
+            font=DesignSystem.FONTS['body']
+        )
+        self.analysis_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # 日志Tab
+        log_tab = ttk.Frame(notebook)
+        notebook.add(log_tab, text="执行日志")
+
+        self.log_text = scrolledtext.ScrolledText(log_tab, wrap=tk.WORD,
+            bg=DesignSystem.COLORS['dark'],
+            fg='#ffffff',
+            font=('Consolas', 10)
+        )
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # 保存notebook引用
         self.notebook = notebook
 
     def _load_config(self):
         """加载配置到UI"""
+        # 加载制裁监测配置
+        if hasattr(self.config, 'sanctions'):
+            self.source_var.set("all")
+            self.date_start_var.set(self.config.sanctions.date_range_start)
+            self.date_end_var.set(self.config.sanctions.date_range_end)
+            self.keyword_input.set_tags(self.config.sanctions.keywords)
+            self.email_enabled_var.set(self.config.sanctions.email_enabled)
+            self.email_recipients_var.set(",".join(self.config.sanctions.email_recipients))
+
         # 加载定时任务配置
         if hasattr(self.config, 'schedule'):
             self.schedule_enabled_var.set(self.config.schedule.enabled)
@@ -320,8 +377,26 @@ class MainWindow:
             self.cron_expr_var.set(self.config.schedule.cron_expression)
             self._update_schedule_ui()
 
-        # 加载历史记录
-        self._update_history_combo()
+        # 设置默认任务描述
+        if not self.task_entry.get("1.0", tk.END).strip():
+            self.task_entry.insert("1.0", "分析OFAC/BIS制裁清单更新，识别涉及中国主体的制裁实体")
+
+    def _set_date_range(self, preset: str):
+        """设置日期范围快捷选项"""
+        today = datetime.now()
+        if preset == "today":
+            self.date_start_var.set(today.strftime("%Y-%m-%d"))
+            self.date_end_var.set(today.strftime("%Y-%m-%d"))
+        elif preset == "7days":
+            from datetime import timedelta
+            week_ago = today - timedelta(days=7)
+            self.date_start_var.set(week_ago.strftime("%Y-%m-%d"))
+            self.date_end_var.set(today.strftime("%Y-%m-%d"))
+        elif preset == "30days":
+            from datetime import timedelta
+            month_ago = today - timedelta(days=30)
+            self.date_start_var.set(month_ago.strftime("%Y-%m-%d"))
+            self.date_end_var.set(today.strftime("%Y-%m-%d"))
 
     def _on_schedule_enabled_change(self):
         """定时任务开关改变"""
@@ -449,39 +524,192 @@ class MainWindow:
         valid_urls = [u for u in urls if u.startswith('http://') or u.startswith('https://')]
         return valid_urls
 
-    def _start_task(self):
-        """开始任务"""
+    def _start_monitoring(self):
+        """开始监测"""
         if self.task_running:
             return
 
         task_desc = self.task_entry.get("1.0", tk.END).strip()
-        if not task_desc:
-            messagebox.showwarning("提示", "请输入任务描述")
-            return
-
-        urls = self._get_urls_from_text()
         keywords = self.keyword_input.get_tags()
 
-        # 如果没有URLs也没有关键词，提示用户
-        if not urls and not keywords:
-            messagebox.showwarning("提示", "请输入URLs或关键词")
+        if not keywords:
+            messagebox.showwarning("提示", "请输入监控关键词")
             return
 
         # 检查是否启用了定时任务
         if self.schedule_enabled_var.get():
             # 保存任务参数到配置
+            self._save_sanctions_config()
             self.config.schedule = self._get_schedule_config()
             self.pm.save_config(self.config)
 
             # 注册定时任务
-            self._register_scheduled_task(task_desc, urls, keywords)
+            self._register_scheduled_monitoring(task_desc, keywords)
             self._update_next_run_time()
             self._update_status("定时任务已设置")
             messagebox.showinfo("定时任务", "定时任务已设置，将在指定时间自动执行")
             return
 
-        # 立即执行（原有逻辑）
-        self._execute_task(task_desc, urls, keywords)
+        # 立即执行
+        self._execute_monitoring(task_desc, keywords)
+
+    def _save_sanctions_config(self):
+        """保存制裁监测配置"""
+        recipients = self.email_recipients_var.get()
+        email_list = [r.strip() for r in recipients.split(',') if r.strip()]
+
+        self.config.sanctions.date_range_start = self.date_start_var.get()
+        self.config.sanctions.date_range_end = self.date_end_var.get()
+        self.config.sanctions.keywords = self.keyword_input.get_tags()
+        self.config.sanctions.email_enabled = self.email_enabled_var.get()
+        self.config.sanctions.email_recipients = email_list
+
+    def _execute_monitoring(self, task_desc: str, keywords: list):
+        """执行监测任务"""
+        self.task_running = True
+        self.start_btn.config(state=tk.DISABLED)
+        self._update_status("正在监测...")
+
+        # 在后台线程执行
+        thread = threading.Thread(
+            target=self._run_monitoring,
+            args=(task_desc, keywords),
+            daemon=True
+        )
+        thread.start()
+
+    def _run_monitoring(self, task_desc: str, keywords: list):
+        """后台执行监测"""
+        try:
+            # 保存配置
+            self._save_sanctions_config()
+            self.pm.save_config(self.config)
+
+            # 获取数据源
+            source = self.source_var.get()
+            date_start = self.date_start_var.get()
+            date_end = self.date_end_var.get()
+
+            self._log(f"开始OFAC/BIS制裁清单监测...")
+            self._log(f"数据源: {source}")
+            self._log(f"日期范围: {date_start} 至 {date_end}")
+            self._log(f"关键词: {', '.join(keywords)}")
+
+            # 创建爬虫
+            crawler = SanctionsCrawler(
+                proxy=self.config.search_proxy if self.config.search_proxy.enabled else None
+            )
+
+            all_results = []
+
+            # 爬取OFAC
+            if source in ["ofac", "all"]:
+                self._update_status("正在爬取OFAC...")
+                self._log("正在爬取OFAC制裁清单...")
+                ofac_results = crawler.crawl_ofac(keywords, date_start, date_end)
+                self._log(f"OFAC: 发现 {len(ofac_results)} 条更新")
+                all_results.extend(ofac_results)
+
+                for r in ofac_results:
+                    self._update_crawl_content(f"[OFAC] {r.date} - {r.title}\n")
+                    if r.has_china:
+                        self._update_crawl_content(f"  ⚠️ 涉及中国主体: {', '.join(r.matched_keywords)}\n")
+
+            # 爬取BIS
+            if source in ["bis", "all"]:
+                self._update_status("正在爬取BIS...")
+                self._log("正在爬取BIS实体清单...")
+                bis_results = crawler.crawl_bis(keywords, date_start, date_end)
+                self._log(f"BIS: 发现 {len(bis_results)} 条更新")
+                all_results.extend(bis_results)
+
+                for r in bis_results:
+                    self._update_crawl_content(f"[BIS] {r.date} - {r.title}\n")
+                    if r.has_china:
+                        self._update_crawl_content(f"  ⚠️ 涉及中国主体: {', '.join(r.matched_keywords)}\n")
+
+            self._update_progress(30)
+
+            # 过滤涉及中国主体的结果
+            china_results = [r for r in all_results if r.has_china]
+            self._log(f"发现 {len(china_results)} 条涉及中国主体的更新")
+
+            # LLM分析
+            if china_results:
+                self._update_status("正在进行LLM分析...")
+                self._log("开始LLM深度分析...")
+
+                analyzer = SanctionsAnalyzer(
+                    llm_config=self.config.llm,
+                    llm_proxy=self.config.llm_proxy if self.config.llm_proxy.enabled else None
+                )
+
+                self._update_analysis_content("# OFAC/BIS制裁分析报告\n\n")
+                self._update_analysis_content(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                self._update_analysis_content(f"共发现 **{len(china_results)}** 个涉及中国主体的制裁实体\n\n")
+                self._update_analysis_content("---\n\n")
+
+                for i, result in enumerate(china_results):
+                    self._log(f"分析中: {result.title or result.source}")
+                    self._update_analysis_content(f"## {i+1}. {result.title or result.source}\n\n")
+
+                    # 执行分析
+                    analysis = analyzer.analyze_sync(result, task_desc)
+                    self._update_analysis_content(analysis)
+                    self._update_analysis_content("\n\n---\n\n")
+
+                    self._update_progress(30 + int(60 * (i + 1) / len(china_results)))
+
+            else:
+                self._log("未发现涉及中国主体的制裁更新")
+                self._update_analysis_content("# 分析结果\n\n")
+                self._update_analysis_content("✅ 未发现涉及中国主体的制裁更新\n")
+
+            self._update_progress(100)
+            self._update_status("监测完成")
+            self._log("监测任务完成")
+
+        except Exception as e:
+            self._log(f"错误: {e}")
+            messagebox.showerror("错误", f"监测失败: {e}")
+            self._update_status("监测失败")
+
+        finally:
+            self.task_running = False
+            self.start_btn.config(state=tk.NORMAL)
+
+    def _register_scheduled_monitoring(self, task_desc: str, keywords: list):
+        """注册定时监测任务"""
+        self._scheduled_params = {
+            "task_desc": task_desc,
+            "keywords": keywords
+        }
+
+        self.scheduler.remove_task("sanctions_task")
+
+        schedule = self._get_schedule_config()
+        self.scheduler.add_task(
+            name="sanctions_task",
+            schedule=schedule,
+            callback=lambda: self._execute_scheduled_monitoring()
+        )
+
+    def _execute_scheduled_monitoring(self):
+        """执行定时监测任务"""
+        if hasattr(self, '_scheduled_params'):
+            params = self._scheduled_params
+            self.root.after(0, lambda: self._execute_monitoring(
+                params["task_desc"],
+                params["keywords"]
+            ))
+
+    def _log(self, message: str):
+        """添加日志"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.root.after(0, lambda: (
+            self.log_text.insert(tk.END, f"[{timestamp}] {message}\n"),
+            self.log_text.see(tk.END)
+        ))
 
     def _register_scheduled_task(self, task_desc: str, urls: list, keywords: list):
         """注册定时任务"""
@@ -514,100 +742,6 @@ class MainWindow:
                 params["keywords"]
             ))
 
-    def _execute_task(self, task_desc: str, urls: list, keywords: list):
-        """执行任务"""
-        self.task_running = True
-        self.start_btn.config(state=tk.DISABLED)
-        self._update_status("正在搜索...")
-
-        # 在后台线程执行
-        thread = threading.Thread(
-            target=self._run_task,
-            args=(task_desc, urls, keywords),
-            daemon=True
-        )
-        thread.start()
-
-    def _run_task(self, task_desc: str, urls: list, keywords: list):
-        """后台执行任务"""
-        try:
-            # 保存到历史记录
-            self._save_to_history(task_desc, keywords, urls)
-
-            total_urls = len(urls)
-
-            # 1. 爬取URLs（不搜索，只爬取用户指定的URLs）
-            self._update_status(f"正在爬取 {total_urls} 个页面...")
-            self._update_crawl_content(f"开始爬取 {total_urls} 个URL：\n")
-            self._update_crawl_content('\n'.join(f"- {u}" for u in urls[:20]))
-            if total_urls > 20:
-                self._update_crawl_content(f"\n... 还有 {total_urls - 20} 个")
-
-            crawler = BaseCrawler(
-                proxy=self.config.search_proxy if self.config.search_proxy.enabled else None,
-                max_depth=self.depth_var.get()
-            )
-
-            crawl_results = []
-            for i, url in enumerate(urls):
-                self._update_status(f"正在爬取 {i+1}/{total_urls}: {url[:50]}...")
-                result = crawler.crawl_url(url)
-                crawl_results.append(result)
-
-                # 更新内容面板
-                self._update_crawl_content(f"\n\n--- {url} ---\n")
-                self._update_crawl_content(result.markdown[:2000])
-                if len(result.markdown) > 2000:
-                    self._update_crawl_content("\n...(内容截断)")
-
-                self._update_progress(10 + int(80 * (i + 1) / total_urls))
-
-            # 3. LLM分析
-            self._update_status("正在分析...")
-            self._update_llm_content("")
-
-            # 合并所有内容
-            all_markdown = []
-            for r in crawl_results:
-                if r.markdown:
-                    all_markdown.append(f"## {r.title}\n{r.markdown}")
-
-            combined_content = "\n\n---\n\n".join(all_markdown)
-
-            # 调用LLM分析
-            llm_agent = LLMAgent(
-                llm_config=self.config.llm,
-                search_engine=SearchEngine(
-                    config=SearchConfig(provider=self.config.search.provider)
-                ),
-                llm_proxy=self.config.llm_proxy if self.config.llm_proxy.enabled else None
-            )
-
-            self._update_llm_content("# 分析中...\n\n")
-
-            for chunk in llm_agent.analyze(
-                context=combined_content,
-                user_query=task_desc,
-                custom_system_prompt=self.config.llm.system_prompt,
-                progress_callback=self._update_status
-            ):
-                self._update_llm_content(chunk)
-
-            self._update_progress(100)
-            self._update_status("任务完成")
-
-            # 保存结果
-            self.last_crawl_results = crawl_results
-            self.last_analysis = self.llm_text.get("1.0", tk.END)
-
-        except Exception as e:
-            messagebox.showerror("错误", f"任务执行失败: {e}")
-            self._update_status("任务失败")
-
-        finally:
-            self.task_running = False
-            self.start_btn.config(state=tk.NORMAL)
-
     def _update_status(self, status: str):
         """更新状态"""
         self.root.after(0, lambda: self.status_var.set(status))
@@ -624,34 +758,49 @@ class MainWindow:
         self.root.after(0, append)
 
     def _update_llm_content(self, text: str):
-        """更新LLM内容"""
+        """更新LLM内容（兼容旧方法）"""
         def append():
             if text == "":
-                self.llm_text.delete("1.0", tk.END)
+                self.analysis_text.delete("1.0", tk.END)
             else:
-                self.llm_text.insert(tk.END, text)
-                self.llm_text.see(tk.END)
+                self.analysis_text.insert(tk.END, text)
+                self.analysis_text.see(tk.END)
         self.root.after(0, append)
 
-    def _export_html(self):
-        """导出HTML"""
-        content = self.llm_text.get("1.0", tk.END).strip()
+    def _update_analysis_content(self, text: str):
+        """更新分析结果内容"""
+        def append():
+            if text == "":
+                self.analysis_text.delete("1.0", tk.END)
+            else:
+                self.analysis_text.insert(tk.END, text)
+                self.analysis_text.see(tk.END)
+        self.root.after(0, append)
+
+    def _export_report(self):
+        """导出报告"""
+        content = self.analysis_text.get("1.0", tk.END).strip()
         if not content:
             messagebox.showwarning("提示", "没有内容可导出")
             return
 
         filepath = filedialog.asksaveasfilename(
-            defaultextension=".html",
-            filetypes=[("HTML文件", "*.html"), ("所有文件", "*.*")]
+            defaultextension=".md",
+            filetypes=[("Markdown文件", "*.md"), ("HTML文件", "*.html"), ("所有文件", "*.*")]
         )
         if filepath:
-            html_content = self._markdown_to_html(content)
-            Path(filepath).write_text(html_content, encoding='utf-8')
+            if filepath.endswith('.html'):
+                content = self._markdown_to_html(content)
+            Path(filepath).write_text(content, encoding='utf-8')
             messagebox.showinfo("成功", f"已导出到 {filepath}")
 
+    def _export_html(self):
+        """导出HTML（兼容旧方法）"""
+        self._export_report()
+
     def _export_markdown(self):
-        """导出Markdown"""
-        content = self.llm_text.get("1.0", tk.END).strip()
+        """导出Markdown（兼容旧方法）"""
+        content = self.analysis_text.get("1.0", tk.END).strip()
         if not content:
             messagebox.showwarning("提示", "没有内容可导出")
             return
@@ -666,7 +815,7 @@ class MainWindow:
 
     def _export_json(self):
         """导出JSON"""
-        content = self.llm_text.get("1.0", tk.END).strip()
+        content = self.analysis_text.get("1.0", tk.END).strip()
         if not content:
             messagebox.showwarning("提示", "没有内容可导出")
             return
@@ -683,13 +832,33 @@ class MainWindow:
                 json.dump(report, f, ensure_ascii=False, indent=2)
             messagebox.showinfo("成功", f"已导出到 {filepath}")
 
+    def _clear_log(self):
+        """清空日志"""
+        self.log_text.delete("1.0", tk.END)
+        self._log("日志已清空")
+
+    def _send_email(self):
+        """发送邮件（预留功能）"""
+        if not self.email_enabled_var.get():
+            messagebox.showinfo("提示", "请先启用邮件通知")
+            return
+
+        recipients = self.email_recipients_var.get()
+        if not recipients:
+            messagebox.showwarning("提示", "请输入收件人")
+            return
+
+        messagebox.showinfo("提示", "邮件发送功能预留中")
+        self._log("邮件发送功能预留中")
+
     def _parse_report_to_json(self, content: str) -> dict:
         """将Markdown报告解析为JSON结构"""
         report = {
             "title": "",
             "summary": "",
             "content": content,
-            "sources": []
+            "sources": [],
+            "generated_at": datetime.now().isoformat()
         }
 
         lines = content.split('\n')

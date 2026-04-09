@@ -64,6 +64,59 @@ class HistoryConfig(BaseModel):
     max_items: int = 6
 
 
+# ============ OFAC/BIS 制裁监测相关配置 ============
+
+class SanctionsConfig(BaseModel):
+    """制裁监测配置"""
+    keywords: list[str] = ["china", "中国", "hong kong", "北京", "上海", "深圳"]
+    ofac_url: str = "https://ofac.treasury.gov/recent-actions/sanctions-list-updates"
+    bis_url: str = "https://www.federalregister.gov/agencies/industry-and-security-bureau"
+    date_range_start: str = ""  # YYYY-MM-DD
+    date_range_end: str = ""    # YYYY-MM-DD
+    email_recipients: list[str] = []
+    email_enabled: bool = False
+    icenter_enabled: bool = False
+
+
+class SanctionsCrawlResult(BaseModel):
+    """制裁爬取结果"""
+    success: bool = False
+    date: str = ""  # 发布日期
+    content: str = ""
+    url: str = ""
+    source: str = ""  # OFAC / BIS
+    title: str = ""
+    entities: list[str] = []  # 实体名称列表
+    has_china: bool = False
+    matched_keywords: list[str] = []
+
+
+class SanctionsAnalysisResult(BaseModel):
+    """制裁分析结果"""
+    company_name: str = ""
+    chinese_name: str = ""
+    chinese_address: str = ""
+    registration_number: str = ""
+    shareholders: str = ""
+    parent_company: str = ""
+    ofac_sanction: bool = False
+    bis_sanction: bool = False
+    risk_level: str = "🟢"  # 🔴 高风险 🟡 中风险 🟢 低风险
+    analysis: str = ""
+    source: str = ""
+
+
+class EmailConfig(BaseModel):
+    """邮件配置"""
+    enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    from_address: str = ""
+    recipients: list[str] = []
+
+
 class AppConfig(BaseModel):
     llm_proxy: ProxyConfig = ProxyConfig(
         enabled=True,
@@ -77,4 +130,6 @@ class AppConfig(BaseModel):
     feishu: FeishuConfig = FeishuConfig()
     schedule: ScheduleConfig = ScheduleConfig()
     history: HistoryConfig = HistoryConfig()
+    sanctions: SanctionsConfig = SanctionsConfig()
+    email: EmailConfig = EmailConfig()
     password_hash: str = ""  # PBKDF2 hash
