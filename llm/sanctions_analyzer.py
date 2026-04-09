@@ -41,7 +41,14 @@ class SanctionsAnalyzer:
 ### 2.2 BIS实体清单（美国）
 | 实体名称 | 制裁类型 | 列入日期 | 状态 | 风险等级 |
 |----------|----------|----------|------|----------|
-| {bis_info} | BIS Entity List | {bis_date} | {bis_status} | {bis_risk} |
+| {bis_info} | {bis_type} | {bis_date} | {bis_status} | {bis_risk} |
+
+**BIS制裁类型说明：**
+- Entity List (EL) - 实体清单
+- Entity List Footnote - 带脚注实体清单
+- Unverified List (UVL) - 未经核实清单 / 未经验证清单
+- Denied Persons List (DPL) - 被拒绝人员清单
+- Military End User List (MEU) - 军事最终用户清单
 
 ## 三、综合风险评估
 {risk_assessment}
@@ -93,6 +100,7 @@ class SanctionsAnalyzer:
             ofac_status="（需从内容提取）",
             ofac_risk="🔴" if crawl_result.source == "OFAC" else "🟢",
             bis_info=crawl_result.source,
+            bis_type="（需从内容提取）",
             bis_date="（需从内容提取）",
             bis_status="（需从内容提取）",
             bis_risk="🔴" if crawl_result.source == "BIS" else "🟢",
